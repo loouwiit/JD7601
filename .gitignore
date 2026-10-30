@@ -1,0 +1,5 @@
+/build/
+/debug.log
+/sdkconfig.old
+/.vscode/
+/.clangd
