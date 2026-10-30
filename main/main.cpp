@@ -37,10 +37,11 @@ extern "C" void app_main(void)
 	for (int i = 0; i < screen.Height; i++)
 	{
 		screen[i][20] = Color::WHITE;
-		screen[i][21] = Color::YELLOW;
+		screen[i][21] = Color::BLACK;
 		screen[i][22] = Color::RED;
-		screen[i][23] = Color::BLUE;
-		screen[i][24] = Color::GREEN;
+		screen[i][23] = Color::GREEN;
+		screen[i][24] = Color::YELLOW;
+		screen[i][25] = Color::BLUE;
 	}
 
 	ESP_LOGI(TAG, "flush screen");
