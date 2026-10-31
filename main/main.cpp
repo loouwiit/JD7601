@@ -10,6 +10,8 @@ extern "C" void app_main(void)
 {
 	constexpr static char TAG[] = "main";
 
+	GPIO::enableGlobalInterrupt();
+
 	vTaskDelay(1000);
 
 	ESP_LOGI(TAG, "creating spi");
@@ -31,7 +33,7 @@ extern "C" void app_main(void)
 	for (int i = 0; i < screen.Height; i++)
 		for (int j = 0; j < screen.Width; j++)
 		{
-			screen[i][j] = ColorMap[rand() % 6];
+			screen[i][j] = ColorMap[((i / 8) ^ (j / 8)) % 6];
 		}
 
 	ESP_LOGI(TAG, "flush screen");

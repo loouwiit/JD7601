@@ -10,80 +10,13 @@ public:
 	constexpr static int Width = 720;
 	constexpr static int Height = 480;
 
-	JD7601() = default;
-	JD7601(SPI& spiHost, GPIO reset, GPIO dc, GPIO idle, GPIO cs = GPIO::NC, unsigned char transmitionSize = 16, int speed = 2000000) : spi{ spiHost, cs, transmitionSize, speed }, resetGpio{ reset, GPIO::Mode::GPIO_MODE_OUTPUT }, dcGpio{ dc, GPIO::Mode::GPIO_MODE_OUTPUT }, idleGpio{ idle, GPIO::Mode::GPIO_MODE_INPUT } {}
-	JD7601(JD7601&& move) { operator=(std::move(move)); }
-	JD7601& operator=(JD7601&& move)
+	enum class FlushStatus
 	{
-		std::swap(move.frame, frame);
-		std::swap(move.resetGpio, resetGpio);
-		std::swap(move.dcGpio, dcGpio);
-		std::swap(move.idleGpio, idleGpio);
-		std::swap(move.spi, spi);
-		return *this;
-	}
-
-	bool reset()
-	{
-		resetGpio = false;
-		vTaskDelay(20);
-		resetGpio = true;
-		vTaskDelay(10);
-		resetGpio = false;
-		vTaskDelay(20);
-		resetGpio = true;
-		vTaskDelay(10);
-		return true;
-	}
-
-	bool init()
-	{
-		if (!wait(pdMS_TO_TICKS(5000))) return false;
-		if (!command(0xE9)) return false;
-		if (!data(0x01)) return false;
-		return true;
-	}
-
-	bool wait(TickType_t maxWaitTime = pdMS_TO_TICKS(60 * 1000))
-	{
-		TickType_t timeOut = xTaskGetTickCount() + maxWaitTime;
-		while (spi.getTransmittingCount() != 0 && xTaskGetTickCount() < timeOut)
-			vTaskDelay(1);
-		while ((bool)idleGpio == false && xTaskGetTickCount() < timeOut)
-			vTaskDelay(1);
-		if (spi.getTransmittingCount() != 0)
-			ESP_LOGE(TAG, "still transmiting");
-		if ((bool)idleGpio == false)
-			ESP_LOGE(TAG, "still busy");
-		return spi.getTransmittingCount() == 0 && (bool)idleGpio;
-	}
-
-	bool flush()
-	{
-		if (!wait(pdMS_TO_TICKS(60 * 1000))) return false;
-		if (!command(0x10)) return false;
-
-		constexpr int batchCount = 6;
-		constexpr size_t batchSize = sizeof(frame->data) / batchCount;
-		static_assert(batchSize * batchCount == sizeof(frame->data));
-		uint8_t* frameData = &frame->data[0][0];
-
-		for (int i = 0; i < batchCount; i++)
-		{
-			if (!data(frameData, batchSize)) return false;
-			frameData += batchSize;
-		}
-
-		return refresh();
-	}
-
-	bool sleep()
-	{
-		if (!wait(pdMS_TO_TICKS(60 * 1000))) return false;
-		if (!command(0x07)) return false;
-		if (!command(0xA5)) return false;
-		return true;
-	}
+		None,
+		Pon,
+		Drf,
+		Pof,
+	};
 
 	enum class Color : char
 	{
@@ -147,6 +80,90 @@ public:
 
 	Frame* frame{};
 
+	JD7601() = default;
+	JD7601(SPI& spiHost, GPIO reset, GPIO dc, GPIO idle, GPIO cs = GPIO::NC, unsigned char transmitionSize = 16, int speed = 2000000) : spi{ spiHost, cs, transmitionSize, speed }, resetGpio{ reset, GPIO::Mode::GPIO_MODE_OUTPUT }, dcGpio{ dc, GPIO::Mode::GPIO_MODE_OUTPUT }, idleGpio{ idle, GPIO::Mode::GPIO_MODE_INPUT , GPIO::Pull::GPIO_FLOATING, GPIO::Interrupt::GPIO_INTR_POSEDGE, processFlush, this } {}
+	JD7601(JD7601&& move) { operator=(std::move(move)); }
+	JD7601& operator=(JD7601&& move)
+	{
+		std::swap(move.frame, frame);
+		std::swap(move.resetGpio, resetGpio);
+		std::swap(move.dcGpio, dcGpio);
+		std::swap(move.idleGpio, idleGpio);
+		std::swap(move.spi, spi);
+		std::swap(move.flushStatus, flushStatus);
+
+		idleGpio.setInterrupt(GPIO::Interrupt::GPIO_INTR_DISABLE);
+		idleGpio.setInterrupt(GPIO::Interrupt::GPIO_INTR_POSEDGE, processFlush, this);
+
+		return *this;
+	}
+
+	bool reset()
+	{
+		resetGpio = false;
+		vTaskDelay(20);
+		resetGpio = true;
+		vTaskDelay(10);
+		resetGpio = false;
+		vTaskDelay(20);
+		resetGpio = true;
+		vTaskDelay(10);
+		return true;
+	}
+
+	bool init()
+	{
+		if (!wait(pdMS_TO_TICKS(5000))) return false;
+		if (!command(0xE9)) return false;
+		if (!data(0x01)) return false;
+		return true;
+	}
+
+	bool wait(TickType_t maxWaitTime = pdMS_TO_TICKS(60 * 1000), FlushStatus targetStatus = FlushStatus::None)
+	{
+		TickType_t timeOut = xTaskGetTickCount() + maxWaitTime;
+		while (flushStatus != targetStatus && xTaskGetTickCount() < timeOut)
+			vTaskDelay(1);
+		while (spi.getTransmittingCount() != 0 && xTaskGetTickCount() < timeOut)
+			vTaskDelay(1);
+		while ((bool)idleGpio == false && xTaskGetTickCount() < timeOut)
+			vTaskDelay(1);
+		if (flushStatus != targetStatus)
+			ESP_LOGE(TAG, "still flushing");
+		if (spi.getTransmittingCount() != 0)
+			ESP_LOGE(TAG, "still transmiting");
+		if ((bool)idleGpio == false)
+			ESP_LOGE(TAG, "still busy");
+		return flushStatus == targetStatus && spi.getTransmittingCount() == 0 && (bool)idleGpio;
+	}
+
+	bool flush()
+	{
+		if (!wait(pdMS_TO_TICKS(60 * 1000))) return false;
+		if (!command(0x10)) return false;
+
+		constexpr int batchCount = 6;
+		constexpr size_t batchSize = sizeof(frame->data) / batchCount;
+		static_assert(batchSize * batchCount == sizeof(frame->data));
+		uint8_t* frameData = &frame->data[0][0];
+
+		for (int i = 0; i < batchCount; i++)
+		{
+			if (!data(frameData, batchSize)) return false;
+			frameData += batchSize;
+		}
+
+		return refresh();
+	}
+
+	bool sleep()
+	{
+		if (!wait(pdMS_TO_TICKS(60 * 1000))) return false;
+		if (!command(0x07)) return false;
+		if (!command(0xA5)) return false;
+		return true;
+	}
+
 	auto operator[](short x, short y) { return (*frame)[x, y]; }
 	auto operator[](short y) { return (*frame)[y]; }
 
@@ -159,6 +176,8 @@ private:
 	GPIO idleGpio{};
 
 	using SmallData_t = SPIDevice::SmallData_t;
+
+	FlushStatus flushStatus = FlushStatus::None;
 
 	static void setDcCommand(void* param)
 	{
@@ -187,20 +206,45 @@ private:
 		return spi.transmit(data, size * 8, setDcData, this, callbackAfter, param);
 	}
 
-	bool refresh()
+	static void processFlush(void* param)
 	{
-		ESP_LOGI(TAG, "PON");
-		if (!command(0x04)) return false; // PON
-		if (!wait()) return false;
+		auto& self = *(JD7601*)param;
+		switch (self.flushStatus)
+		{
+		case FlushStatus::Drf:
+			self.flushStatus = FlushStatus::Pof;
+			self.sendPof();
+			break;
+		case FlushStatus::Pof:
+			self.flushStatus = FlushStatus::None;
+		default:
+			break;
+		}
+	}
 
-		ESP_LOGI(TAG, "DRF");
+	bool sendPonDrf()
+	{
+		if (flushStatus != FlushStatus::Pon) return false;
+		if (!command(0x04)) return false; // PON
+		if (!wait(pdMS_TO_TICKS(1000), FlushStatus::Pon)) return false;
+		flushStatus = FlushStatus::Drf;
 		if (!command(0x12)) return false; // DRF
 		if (!data(0x00)) return false;
-		if (!wait()) return false;
+		return true;
+	}
 
-		ESP_LOGI(TAG, "POF");
+	bool sendPof()
+	{
+		if (flushStatus != FlushStatus::Pof) return false;
 		if (!command(0x02)) return false; // POF
 		if (!data(0x00)) return false;
 		return true;
+	}
+
+	bool refresh()
+	{
+		if (flushStatus != FlushStatus::None) return false;
+		flushStatus = FlushStatus::Pon;
+		return sendPonDrf();
 	}
 };
