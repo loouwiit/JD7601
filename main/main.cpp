@@ -4,6 +4,7 @@ SPI spiHost{};
 JD7601 screen{};
 DMA_ATTR JD7601::Frame frame{};
 using Color = JD7601::Color;
+constexpr auto& ColorMap = JD7601::ColorMap;
 
 extern "C" void app_main(void)
 {
@@ -27,22 +28,11 @@ extern "C" void app_main(void)
 		return;
 	}
 
-	for (int i = 0; i < screen.Width; i++)
-		screen[60][i] = Color::YELLOW;
-
-	screen[10, 10] = Color::RED;
-	screen[10, 11] = Color::RED;
-	screen[11, 10] = Color::RED;
-	screen[11, 11] = Color::RED;
 	for (int i = 0; i < screen.Height; i++)
-	{
-		screen[i][20] = Color::WHITE;
-		screen[i][21] = Color::BLACK;
-		screen[i][22] = Color::RED;
-		screen[i][23] = Color::GREEN;
-		screen[i][24] = Color::YELLOW;
-		screen[i][25] = Color::BLUE;
-	}
+		for (int j = 0; j < screen.Width; j++)
+		{
+			screen[i][j] = ColorMap[rand() % 6];
+		}
 
 	ESP_LOGI(TAG, "flush screen");
 	if (!screen.flush()) ESP_LOGE(TAG, "screen flush failed");

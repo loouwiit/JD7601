@@ -94,6 +94,16 @@ public:
 		GREEN = 0x6,
 	};
 
+	constexpr static Color ColorMap[] =
+	{
+		Color::BLACK,
+		Color::WHITE,
+		Color::YELLOW,
+		Color::RED,
+		Color::BLUE,
+		Color::GREEN,
+	};
+
 	class Frame
 	{
 	public:
