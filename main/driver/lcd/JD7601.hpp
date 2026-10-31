@@ -4,11 +4,13 @@
 #include "esp_log.h"
 #include "driver/spi/spi.hpp"
 
+#include "driver/vector/vector.hpp"
+#include "driver/lcd/rectangle.hpp"
+
 class JD7601
 {
 public:
-	constexpr static int Width = 720;
-	constexpr static int Height = 480;
+	constexpr static Vector2s Size = { 720, 480 };
 
 	enum class FlushStatus
 	{
@@ -38,14 +40,18 @@ public:
 		Color::GREEN,
 	};
 
+	using Rectangle = ::Rectangle<JD7601>;
+	using RectangleExtend = ::RectangleExtend<JD7601>;
+
 	class Frame
 	{
 	public:
-		constexpr auto operator[](short x, short y) { return PixelProxy{ *this, x, y }; }
+		constexpr auto operator[](Vector2s position) { return PixelProxy{ *this, position }; }
+		constexpr auto operator[](short x, short y) { return PixelProxy{ *this,{ x, y } }; }
 		constexpr auto operator[](short y) { return LineProxy{ *this, y }; }
 
 	protected:
-		uint8_t data[Height][Width / 2]{}; // 单像素uint4
+		uint8_t data[Size.y][Size.x / 2]{}; // 单像素uint4
 		friend class JD7601;
 		friend class PixelProxy;
 	};
@@ -55,25 +61,24 @@ public:
 	public:
 		Frame& frame;
 		short y{};
-		constexpr auto operator[](short x) { return PixelProxy{ frame, x, y }; }
+		constexpr auto operator[](short x) { return PixelProxy{ frame,{ x, y } }; }
 	};
 
 	class PixelProxy
 	{
 	public:
 		Frame& frame;
-		short x{};
-		short y{};
+		Vector2s position{};
 
 		constexpr operator Color()
 		{
-			return (Color)((frame.data[y][x / 2] >> (4 ^ ((x & 0x01) * 4))) & 0x0F);
+			return (Color)((frame.data[position.y][position.x / 2] >> (4 ^ ((position.x & 0x01) * 4))) & 0x0F);
 		}
 
 		constexpr auto& operator= (Color color)
 		{
-			if (x & 0x01) frame.data[y][x / 2] = (frame.data[y][x / 2] & 0xF0) | (uint8_t)color;
-			else frame.data[y][x / 2] = (frame.data[y][x / 2] & 0x0F) | ((uint8_t)color << 4);
+			if (position.x & 0x01) frame.data[position.y][position.x / 2] = (frame.data[position.y][position.x / 2] & 0xF0) | (uint8_t)color;
+			else frame.data[position.y][position.x / 2] = (frame.data[position.y][position.x / 2] & 0x0F) | ((uint8_t)color << 4);
 			return *this;
 		}
 	};
@@ -166,6 +171,11 @@ public:
 
 	auto operator[](short x, short y) { return (*frame)[x, y]; }
 	auto operator[](short y) { return (*frame)[y]; }
+
+	decltype(auto) draw(auto&& element)
+	{
+		return element.drawTo(*this);
+	}
 
 private:
 	constexpr static char TAG[] = "JD7601";
