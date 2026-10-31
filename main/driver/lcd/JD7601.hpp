@@ -79,6 +79,7 @@ public:
 
 	bool sleep()
 	{
+		if (!wait(pdMS_TO_TICKS(60 * 1000))) return false;
 		if (!command(0x07)) return false;
 		if (!command(0xA5)) return false;
 		return true;
@@ -188,11 +189,16 @@ private:
 
 	bool refresh()
 	{
+		ESP_LOGI(TAG, "PON");
 		if (!command(0x04)) return false; // PON
+		if (!wait()) return false;
 
+		ESP_LOGI(TAG, "DRF");
 		if (!command(0x12)) return false; // DRF
 		if (!data(0x00)) return false;
+		if (!wait()) return false;
 
+		ESP_LOGI(TAG, "POF");
 		if (!command(0x02)) return false; // POF
 		if (!data(0x00)) return false;
 		return true;
