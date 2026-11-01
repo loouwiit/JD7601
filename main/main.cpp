@@ -1,4 +1,5 @@
 #include "driver/lcd/JD7601.hpp"
+#include "driver/task/task.hpp"
 
 using EPD = JD7601;
 using Color = EPD::Color;
@@ -7,6 +8,9 @@ constexpr auto& ColorMap = EPD::ColorMap;
 SPI spiHost{};
 EPD screen{};
 DMA_ATTR EPD::Frame frame{};
+GPIO led{ GPIO_NUM_17 };
+
+Thread screenThread{};
 
 static void updateLed(void* = nullptr)
 {
@@ -14,24 +18,9 @@ static void updateLed(void* = nullptr)
 	GPIO{ GPIO_NUM_17 } = !ledStatus;
 }
 
-extern "C" void app_main(void)
+void screenMain(void*)
 {
-	constexpr static char TAG[] = "main";
-
-	GPIO::enableGlobalInterrupt();
-
-	vTaskDelay(1000);
-
-	ESP_LOGI(TAG, "creating spi");
-	spiHost = SPI{ SPI2_HOST, GPIO::NC, GPIO_NUM_5, GPIO_NUM_4 };
-	ESP_LOGI(TAG, "creating screen");
-	screen = EPD{ spiHost, GPIO_NUM_6, GPIO_NUM_7, GPIO_NUM_16, GPIO_NUM_15 };
-	screen.frame = &frame;
-	screen.idleFunction = updateLed;
-
-	GPIO{ GPIO::GPIO_NUM::GPIO_NUM_17, GPIO::Mode::GPIO_MODE_OUTPUT_OD, GPIO::Pull::GPIO_FLOATING };
-	GPIO{ GPIO::GPIO_NUM::GPIO_NUM_0, GPIO::Mode::GPIO_MODE_INPUT, GPIO::Pull::GPIO_PULLUP_ONLY, GPIO::Interrupt::GPIO_INTR_ANYEDGE, updateLed };
-	updateLed();
+	constexpr static char TAG[] = "screen";
 
 	ESP_LOGI(TAG, "reset screen");
 	screen.reset();
@@ -51,11 +40,11 @@ extern "C" void app_main(void)
 	auto processColor = [&]()
 		{
 			if (++nowColor[0] >= 6)
-				nowColor[0] = nowColor[1]++ + 1;
+				nowColor[0] = ++nowColor[1];
 			if (nowColor[1] >= 6)
-				nowColor[1] = nowColor[2]++ + 1;
+				nowColor[1] = ++nowColor[2];
 			if (nowColor[2] >= 6)
-				nowColor[2] = nowColor[3]++ + 1;
+				nowColor[2] = ++nowColor[3];
 			if (nowColor[3] >= 6)
 				nowColor[3] = 0;
 			if (nowColor[2] >= 6)
@@ -87,6 +76,35 @@ extern "C" void app_main(void)
 
 	ESP_LOGI(TAG, "sleep screen");
 	screen.sleep();
+
+	screenThread = {};
+}
+
+extern "C" void app_main()
+{
+	constexpr static char TAG[] = "main";
+
+	GPIO{ led, GPIO::Mode::GPIO_MODE_OUTPUT_OD, GPIO::Pull::GPIO_FLOATING } = false;
+	GPIO::enableGlobalInterrupt();
+
+	ESP_LOGI(TAG, "creating spi");
+	spiHost = SPI{ SPI2_HOST, GPIO::NC, GPIO_NUM_5, GPIO_NUM_4 };
+	ESP_LOGI(TAG, "creating screen");
+	screen = EPD{ spiHost, GPIO_NUM_6, GPIO_NUM_7, GPIO_NUM_16, GPIO_NUM_15 };
+	screen.frame = &frame;
+	screen.idleFunction = updateLed;
+
+	GPIO{ GPIO::GPIO_NUM::GPIO_NUM_0, GPIO::Mode::GPIO_MODE_INPUT, GPIO::Pull::GPIO_PULLUP_ONLY, GPIO::Interrupt::GPIO_INTR_ANYEDGE,
+		[](void*)
+		{
+			if (!screenThread.isRunning())
+				screenThread = Thread{ screenMain,"screen" };
+			updateLed();
+		} };
+
+	updateLed();
+
+	// screenThread = Thread{ screenMain,"screen" };
 
 	return;
 }
