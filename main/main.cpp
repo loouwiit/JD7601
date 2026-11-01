@@ -8,6 +8,12 @@ SPI spiHost{};
 EPD screen{};
 DMA_ATTR EPD::Frame frame{};
 
+static void updateLed(void* = nullptr)
+{
+	bool ledStatus = !(bool)GPIO { GPIO_NUM_0 } || screen.isBusy();
+	GPIO{ GPIO_NUM_17 } = !ledStatus;
+}
+
 extern "C" void app_main(void)
 {
 	constexpr static char TAG[] = "main";
@@ -21,6 +27,11 @@ extern "C" void app_main(void)
 	ESP_LOGI(TAG, "creating screen");
 	screen = EPD{ spiHost, GPIO_NUM_6, GPIO_NUM_7, GPIO_NUM_16, GPIO_NUM_15 };
 	screen.frame = &frame;
+	screen.idleFunction = updateLed;
+
+	GPIO{ GPIO::GPIO_NUM::GPIO_NUM_17, GPIO::Mode::GPIO_MODE_OUTPUT_OD, GPIO::Pull::GPIO_FLOATING };
+	GPIO{ GPIO::GPIO_NUM::GPIO_NUM_0, GPIO::Mode::GPIO_MODE_INPUT, GPIO::Pull::GPIO_PULLUP_ONLY, GPIO::Interrupt::GPIO_INTR_ANYEDGE, updateLed };
+	updateLed();
 
 	ESP_LOGI(TAG, "reset screen");
 	screen.reset();

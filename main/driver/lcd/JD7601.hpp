@@ -84,9 +84,12 @@ public:
 	};
 
 	Frame* frame{};
+	using function_t = void (*)(void*);
+	function_t idleFunction{};
+	void* idleParam{};
 
 	JD7601() = default;
-	JD7601(SPI& spiHost, GPIO reset, GPIO dc, GPIO idle, GPIO cs = GPIO::NC, unsigned char transmitionSize = 16, int speed = 2000000) : spi{ spiHost, cs, transmitionSize, speed }, resetGpio{ reset, GPIO::Mode::GPIO_MODE_OUTPUT }, dcGpio{ dc, GPIO::Mode::GPIO_MODE_OUTPUT }, idleGpio{ idle, GPIO::Mode::GPIO_MODE_INPUT , GPIO::Pull::GPIO_FLOATING, GPIO::Interrupt::GPIO_INTR_POSEDGE, processFlush, this } {}
+	JD7601(SPI& spiHost, GPIO reset, GPIO dc, GPIO idle, GPIO cs = GPIO::NC, unsigned char transmitionSize = 16, int speed = 2000000) : spi{ spiHost, cs, transmitionSize, speed }, resetGpio{ reset, GPIO::Mode::GPIO_MODE_OUTPUT }, dcGpio{ dc, GPIO::Mode::GPIO_MODE_OUTPUT }, idleGpio{ idle, GPIO::Mode::GPIO_MODE_INPUT , GPIO::Pull::GPIO_FLOATING, GPIO::Interrupt::GPIO_INTR_POSEDGE, idleCallback, this } {}
 	JD7601(JD7601&& move) { operator=(std::move(move)); }
 	JD7601& operator=(JD7601&& move)
 	{
@@ -98,7 +101,7 @@ public:
 		std::swap(move.flushStatus, flushStatus);
 
 		idleGpio.setInterrupt(GPIO::Interrupt::GPIO_INTR_DISABLE);
-		idleGpio.setInterrupt(GPIO::Interrupt::GPIO_INTR_POSEDGE, processFlush, this);
+		idleGpio.setInterrupt(GPIO::Interrupt::GPIO_INTR_POSEDGE, idleCallback, this);
 
 		return *this;
 	}
@@ -124,14 +127,15 @@ public:
 		return true;
 	}
 
+	bool isBusy(FlushStatus targetStatus = FlushStatus::None)
+	{
+		return flushStatus != targetStatus || spi.getTransmittingCount() != 0 || !(bool)idleGpio;
+	}
+
 	bool wait(TickType_t maxWaitTime = pdMS_TO_TICKS(60 * 1000), FlushStatus targetStatus = FlushStatus::None)
 	{
 		TickType_t timeOut = xTaskGetTickCount() + maxWaitTime;
-		while (flushStatus != targetStatus && xTaskGetTickCount() < timeOut)
-			vTaskDelay(1);
-		while (spi.getTransmittingCount() != 0 && xTaskGetTickCount() < timeOut)
-			vTaskDelay(1);
-		while ((bool)idleGpio == false && xTaskGetTickCount() < timeOut)
+		while (isBusy(targetStatus) && xTaskGetTickCount() < timeOut)
 			vTaskDelay(1);
 		if (flushStatus != targetStatus)
 			ESP_LOGE(TAG, "still flushing");
@@ -139,7 +143,7 @@ public:
 			ESP_LOGE(TAG, "still transmiting");
 		if ((bool)idleGpio == false)
 			ESP_LOGE(TAG, "still busy");
-		return flushStatus == targetStatus && spi.getTransmittingCount() == 0 && (bool)idleGpio;
+		return !isBusy(targetStatus);
 	}
 
 	bool flush()
@@ -216,7 +220,7 @@ private:
 		return spi.transmit(data, size * 8, setDcData, this, callbackAfter, param);
 	}
 
-	static void processFlush(void* param)
+	static void idleCallback(void* param)
 	{
 		auto& self = *(JD7601*)param;
 		switch (self.flushStatus)
@@ -227,6 +231,8 @@ private:
 			break;
 		case FlushStatus::Pof:
 			self.flushStatus = FlushStatus::None;
+			if (self.idleFunction)
+				self.idleFunction(self.idleParam);
 		default:
 			break;
 		}
