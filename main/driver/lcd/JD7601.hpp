@@ -50,6 +50,8 @@ public:
 		constexpr auto operator[](short x, short y) { return PixelProxy{ *this,{ x, y } }; }
 		constexpr auto operator[](short y) { return LineProxy{ *this, y }; }
 
+		auto& getBuffer() { return data; }
+
 	protected:
 		uint8_t data[Size.y][Size.x / 2]{}; // 单像素uint4
 		friend class JD7601;
