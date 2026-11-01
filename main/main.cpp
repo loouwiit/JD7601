@@ -37,8 +37,6 @@ extern "C" void app_main(void)
 
 	int nowColor[4] = {};
 
-	int count{};
-
 	auto processColor = [&]()
 		{
 			if (++nowColor[0] >= 6)
