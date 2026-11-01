@@ -176,7 +176,7 @@ Thread::~Thread()
 	ThreadData* saveCopy = new ThreadData;
 	*saveCopy = data;
 
-	Task::addTask([](void* param) ->TickType_t
+	new Thread{ [](void* param)
 		{
 			auto& self = *(ThreadData*)param;
 			self.handle = nullptr;
@@ -185,8 +185,8 @@ Thread::~Thread()
 			delete[] self.stack;
 			self.stack = nullptr;
 			delete& self;
-			return Task::infinityTime;
-		}, "delete thread", saveCopy, 100);
+			vTaskDelete(nullptr);
+		}, "delete thread", saveCopy, Thread::Priority::Verylow };
 	vTaskDelete(data.handle);
 }
 
