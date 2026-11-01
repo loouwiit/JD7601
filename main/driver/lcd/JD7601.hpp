@@ -86,7 +86,8 @@ public:
 	Frame* frame{};
 	using function_t = void (*)(void*);
 	function_t idleFunction{};
-	void* idleParam{};
+	function_t busyFunction{};
+	void* functionParam{};
 
 	JD7601() = default;
 	JD7601(SPI& spiHost, GPIO reset, GPIO dc, GPIO idle, GPIO cs = GPIO::NC, unsigned char transmitionSize = 16, int speed = 2000000) : spi{ spiHost, cs, transmitionSize, speed }, resetGpio{ reset, GPIO::Mode::GPIO_MODE_OUTPUT }, dcGpio{ dc, GPIO::Mode::GPIO_MODE_OUTPUT }, idleGpio{ idle, GPIO::Mode::GPIO_MODE_INPUT , GPIO::Pull::GPIO_FLOATING, GPIO::Interrupt::GPIO_INTR_POSEDGE, idleCallback, this } {}
@@ -123,6 +124,7 @@ public:
 
 	bool init()
 	{
+		busyFunction(functionParam);
 		if (!wait(pdMS_TO_TICKS(5000))) return false;
 		if (!command(0xE9)) return false;
 		if (!data(0x01)) return false;
@@ -155,6 +157,7 @@ public:
 
 	bool flush()
 	{
+		busyFunction(functionParam);
 		if (!wait(pdMS_TO_TICKS(60 * 1000))) return false;
 		if (!command(0x10)) return false;
 
@@ -241,7 +244,7 @@ private:
 		case FlushStatus::Pof:
 			self.flushStatus = FlushStatus::None;
 			if (self.idleFunction)
-				self.idleFunction(self.idleParam);
+				self.idleFunction(self.functionParam);
 		default:
 			break;
 		}

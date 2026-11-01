@@ -93,6 +93,7 @@ extern "C" void app_main()
 	screen = EPD{ spiHost, GPIO_NUM_6, GPIO_NUM_7, GPIO_NUM_16, GPIO_NUM_15 };
 	screen.frame = &frame;
 	screen.idleFunction = updateLed;
+	screen.busyFunction = [](void*){led = false;};
 
 	GPIO{ GPIO::GPIO_NUM::GPIO_NUM_0, GPIO::Mode::GPIO_MODE_INPUT, GPIO::Pull::GPIO_PULLUP_ONLY, GPIO::Interrupt::GPIO_INTR_ANYEDGE,
 		[](void*)
