@@ -14,8 +14,8 @@ Thread screenThread{};
 
 static void updateLed(void* = nullptr)
 {
-	bool ledStatus = !(bool)GPIO { GPIO_NUM_0 } || screen.isBusy();
-	GPIO{ GPIO_NUM_17 } = !ledStatus;
+	bool ledStatus = !(bool)GPIO { GPIO_NUM_0 } || (!screen.isSleeping() && screen.isBusy());
+	led = !ledStatus;
 }
 
 void screenMain(void*)

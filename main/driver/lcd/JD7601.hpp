@@ -99,6 +99,7 @@ public:
 		std::swap(move.idleGpio, idleGpio);
 		std::swap(move.spi, spi);
 		std::swap(move.flushStatus, flushStatus);
+		std::swap(move.sleeping, sleeping);
 
 		idleGpio.setInterrupt(GPIO::Interrupt::GPIO_INTR_DISABLE);
 		idleGpio.setInterrupt(GPIO::Interrupt::GPIO_INTR_POSEDGE, idleCallback, this);
@@ -116,6 +117,7 @@ public:
 		vTaskDelay(20);
 		resetGpio = true;
 		vTaskDelay(10);
+		sleeping = false;
 		return true;
 	}
 
@@ -125,6 +127,11 @@ public:
 		if (!command(0xE9)) return false;
 		if (!data(0x01)) return false;
 		return true;
+	}
+
+	bool isSleeping()
+	{
+		return sleeping;
 	}
 
 	bool isBusy(FlushStatus targetStatus = FlushStatus::None)
@@ -170,6 +177,7 @@ public:
 		if (!wait(pdMS_TO_TICKS(60 * 1000))) return false;
 		if (!command(0x07)) return false;
 		if (!command(0xA5)) return false;
+		sleeping = true;
 		return true;
 	}
 
@@ -188,6 +196,7 @@ private:
 	GPIO resetGpio{};
 	GPIO dcGpio{};
 	GPIO idleGpio{};
+	bool sleeping{ true };
 
 	using SmallData_t = SPIDevice::SmallData_t;
 
