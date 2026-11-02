@@ -28,6 +28,9 @@ void screenMain(void*)
 {
 	constexpr static char TAG[] = "screen";
 
+	TickType_t ledSparkTime[2] = { pdMS_TO_TICKS(1000), pdMS_TO_TICKS(1000) };
+	Thread wifiConnectLedSparkThread = Thread{ [](void* param){ TickType_t* ledSparkTime = (TickType_t*)param; while (true) { vTaskDelay(ledSparkTime[(bool)led]); led = !(bool)led; }  }, "led quick spark" , &ledSparkTime, Thread::Priority::Low };
+
 	if (!wifiIsStarted()) wifiStart();
 	if (!wifiStationIsStarted()) wifiStationStart();
 	if (!wifiIsConnect())
@@ -45,6 +48,9 @@ void screenMain(void*)
 
 	if (wifiIsConnect()) do
 	{
+		ledSparkTime[0] = pdMS_TO_TICKS(125);
+		ledSparkTime[1] = pdMS_TO_TICKS(125);
+
 		auto sock = socket(AF_INET, SOCK_STREAM, 0);
 		if (sock < 0) { ESP_LOGE(TAG, "socket failed %d", sock); break; }
 
@@ -129,6 +135,8 @@ void screenMain(void*)
 			}
 	}
 
+	wifiConnectLedSparkThread = {};
+
 	ESP_LOGI(TAG, "reset screen");
 	screen.reset();
 
@@ -157,7 +165,7 @@ extern "C" void app_main()
 {
 	constexpr static char TAG[] = "main";
 
-	GPIO{ led, GPIO::Mode::GPIO_MODE_OUTPUT_OD, GPIO::Pull::GPIO_FLOATING } = false;
+	GPIO{ led, GPIO::Mode::GPIO_MODE_INPUT_OUTPUT_OD, GPIO::Pull::GPIO_FLOATING } = false;
 	GPIO::enableGlobalInterrupt();
 
 	esp_event_loop_create_default();
