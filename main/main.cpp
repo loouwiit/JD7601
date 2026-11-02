@@ -7,6 +7,8 @@
 #include "driver/wifi/http.hpp"
 #include "server.hpp"
 
+#include "driver/touchSensor/touchSensor.hpp"
+
 using EPD = JD7601;
 using Color = EPD::Color;
 constexpr auto& ColorMap = EPD::ColorMap;
@@ -15,6 +17,9 @@ SPI spiHost{};
 EPD screen{};
 DMA_ATTR EPD::Frame frame{};
 GPIO led{ GPIO_NUM_17 };
+
+TouchSensorHost* touchSensorHost{};
+TouchSensor* touchSensor{};
 
 Thread screenThread{};
 
@@ -171,6 +176,14 @@ extern "C" void app_main()
 	esp_event_loop_create_default();
 	nvsInit();
 	wifiInit();
+
+	touchSensorHost = new TouchSensorHost{};
+	touchSensorHost->enable();
+
+	touchSensor = new TouchSensor{ *touchSensorHost, 8 };
+	touchSensor->setCallback([](void*){led = false;}, [](void*){led = true;});
+
+	touchSensorHost->start();
 
 	ESP_LOGI(TAG, "creating spi");
 	spiHost = SPI{ SPI2_HOST, GPIO::NC, GPIO_NUM_5, GPIO_NUM_4 };
