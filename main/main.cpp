@@ -22,6 +22,7 @@ TouchSensorHost* touchSensorHost{};
 TouchSensor* touchSensor{};
 
 Thread screenThread{};
+Thread wifiThread{};
 
 static void updateLed(void* = nullptr)
 {
@@ -29,12 +30,20 @@ static void updateLed(void* = nullptr)
 	led = !ledStatus;
 }
 
-void screenMain(void*)
+void wifiMain(void*)
 {
-	constexpr static char TAG[] = "screen";
+	constexpr static char TAG[] = "wifiMain";
 
 	TickType_t ledSparkTime[2] = { pdMS_TO_TICKS(1000), pdMS_TO_TICKS(1000) };
 	Thread wifiConnectLedSparkThread = Thread{ [](void* param){ TickType_t* ledSparkTime = (TickType_t*)param; while (true) { vTaskDelay(ledSparkTime[(bool)led]); led = !(bool)led; }  }, "led quick spark" , &ledSparkTime, Thread::Priority::Low };
+
+	if (wifiIsStarted())
+	{
+		wifiStop();
+		ledSparkTime[0] = pdMS_TO_TICKS(2000);
+		vTaskDelay(ledSparkTime[0]);
+		goto endup;
+	}
 
 	if (!wifiIsStarted()) wifiStart();
 	if (!wifiStationIsStarted()) wifiStationStart();
@@ -51,96 +60,84 @@ void screenMain(void*)
 	while (wifiIsConnect() != wifiIsWantConnect())
 		vTaskDelay(1);
 
-	if (wifiIsConnect()) do
+endup:
+	wifiConnectLedSparkThread = {}; // 手动进行析构
+	updateLed();
+	wifiThread = {}; // 这里会直接删除空间，不会自动析构
+}
+
+bool updateScreen()
+{
+	constexpr static char TAG[] = "updateScreen";
+
+	led = false;
+	TickType_t ledSparkTime[2] = { pdMS_TO_TICKS(1000), pdMS_TO_TICKS(1000) };
+	Thread wifiConnectLedSparkThread = Thread{ [](void* param){ TickType_t* ledSparkTime = (TickType_t*)param; while (true) { vTaskDelay(ledSparkTime[(bool)led]); led = !(bool)led; }  }, "led quick spark" , &ledSparkTime, Thread::Priority::Low };
+
+	if (!wifiIsConnect()) return false;
+
+	ledSparkTime[0] = pdMS_TO_TICKS(125);
+	ledSparkTime[1] = pdMS_TO_TICKS(125);
+
+	auto sock = socket(AF_INET, SOCK_STREAM, 0);
+	if (sock < 0) { ESP_LOGE(TAG, "socket failed %d", sock); return false; }
+
+	sockaddr_in address{};
+	address.sin_family = AF_INET;
+	address.sin_port = htons(3000);
+	if (auto err = inet_pton(AF_INET, ServerIp, &address.sin_addr) <= 0) { ESP_LOGE(TAG, "inet_pton error %d", err); return false; }
+
+	if (auto err = connect(sock, (struct sockaddr*)&address, sizeof(address)) < 0){ ESP_LOGE(TAG, "connect error %d", err); return false; }
+
+	IOSocketStream socketStream{};
+	socketStream.setSocket(sock);
+
+	HttpRequest request{};
+	request.setPath("/imageBinary");
+	request.setMethod(HttpMethod::Get);
+	request.heads.add({ "Host",Host });
+	request.send(socketStream);
+	socketStream.sendNow();
+
+	vTaskDelay(pdMS_TO_TICKS(500));
+
+	HttpRespond respond{};
+	respond.receive(socketStream);
+	ESP_LOGI(TAG, "body length = %d", respond.getBodyLenght());
+
+	auto& frameBuffer = frame.getBuffer();
+	char* buffer = (char*)&frameBuffer[0][0];
+	const size_t capcity = sizeof(frameBuffer);
+	size_t offset{};
+	size_t bodyLength = respond.getBodyLenght();
+	TickType_t timeout = xTaskGetTickCount() + pdMS_TO_TICKS(1000);
+	do
 	{
-		ledSparkTime[0] = pdMS_TO_TICKS(125);
-		ledSparkTime[1] = pdMS_TO_TICKS(125);
-
-		auto sock = socket(AF_INET, SOCK_STREAM, 0);
-		if (sock < 0) { ESP_LOGE(TAG, "socket failed %d", sock); break; }
-
-		sockaddr_in address{};
-		address.sin_family = AF_INET;
-		address.sin_port = htons(3000);
-		if (auto err = inet_pton(AF_INET, ServerIp, &address.sin_addr) <= 0) { ESP_LOGE(TAG, "inet_pton error %d", err); break; }
-
-		if (auto err = connect(sock, (struct sockaddr*)&address, sizeof(address)) < 0){ ESP_LOGE(TAG, "connect error %d", err); break; }
-
-		IOSocketStream socketStream{};
-		socketStream.setSocket(sock);
-
-		HttpRequest request{};
-		request.setPath("/imageBinary");
-		request.setMethod(HttpMethod::Get);
-		request.heads.add({ "Host",Host });
-		request.send(socketStream);
-		socketStream.sendNow();
-
-		vTaskDelay(pdMS_TO_TICKS(500));
-
-		HttpRespond respond{};
-		respond.receive(socketStream);
-		ESP_LOGI(TAG, "body length = %d", respond.getBodyLenght());
-
-		auto& frameBuffer = frame.getBuffer();
-		char* buffer = (char*)&frameBuffer[0][0];
-		const size_t capcity = sizeof(frameBuffer);
-		size_t offset{};
-		size_t bodyLength = respond.getBodyLenght();
-		TickType_t timeout = xTaskGetTickCount() + pdMS_TO_TICKS(1000);
-		do
+		auto size = socketStream.read(buffer + offset, capcity - offset);
+		if (size != 0) timeout = xTaskGetTickCount() + pdMS_TO_TICKS(1000);
+		else if (timeout < xTaskGetTickCount())
 		{
-			auto size = socketStream.read(buffer + offset, capcity - offset);
-			if (size != 0) timeout = xTaskGetTickCount() + pdMS_TO_TICKS(1000);
-			else if (timeout < xTaskGetTickCount())
-			{
-				ESP_LOGE(TAG, "time out, recieved %d, remian %d", offset, bodyLength);
-				break;
-			}
-			bodyLength -= size;
-			offset += size;
-		} while (bodyLength > 0);
+			ESP_LOGE(TAG, "time out, recieved %d, remian %d", offset, bodyLength);
+			break;
+		}
+		bodyLength -= size;
+		offset += size;
+	} while (bodyLength > 0);
 
-		socketStream.close();
-	} while (false);
-	else
+	socketStream.close();
+	return true;
+}
+
+void screenMain(void*)
+{
+	constexpr static char TAG[] = "screenMain";
+
+	if (!updateScreen())
 	{
-		EPD::RectangleExtend rectangle{};
-		rectangle.size = { 40,60 };
-
-		int nowColor[4] = {};
-
-		auto processColor = [&]()
-			{
-				if (++nowColor[0] >= 6)
-					nowColor[0] = ++nowColor[1];
-				if (nowColor[1] >= 6)
-					nowColor[1] = ++nowColor[2];
-				if (nowColor[2] >= 6)
-					nowColor[2] = ++nowColor[3];
-				if (nowColor[3] >= 6)
-					nowColor[3] = 0;
-				if (nowColor[2] >= 6)
-					nowColor[2] = nowColor[3];
-				if (nowColor[1] >= 6)
-					nowColor[1] = nowColor[2];
-				if (nowColor[0] >= 6)
-					nowColor[0] = nowColor[1];
-			};
-
-		for (rectangle.position.y = 0; rectangle.position.y < EPD::Size.y; rectangle.position.y += rectangle.size.y)
-			for (rectangle.position.x = 0; rectangle.position.x < EPD::Size.x; rectangle.position.x += rectangle.size.x)
-			{
-				rectangle.color[0][0] = ColorMap[nowColor[0]];
-				rectangle.color[0][1] = ColorMap[nowColor[1]];
-				rectangle.color[1][0] = ColorMap[nowColor[2]];
-				rectangle.color[1][1] = ColorMap[nowColor[3]];
-				screen.draw(rectangle);
-				processColor();
-			}
+		ESP_LOGE(TAG, "update screen failed");
+		goto endup;
 	}
-
-	wifiConnectLedSparkThread = {};
+	updateLed();
 
 	ESP_LOGI(TAG, "reset screen");
 	screen.reset();
@@ -163,6 +160,7 @@ void screenMain(void*)
 	ESP_LOGI(TAG, "sleep screen");
 	screen.sleep();
 
+endup:
 	screenThread = {};
 }
 
@@ -181,7 +179,13 @@ extern "C" void app_main()
 	touchSensorHost->enable();
 
 	touchSensor = new TouchSensor{ *touchSensorHost, 8 };
-	touchSensor->setCallback([](void*){led = false;}, [](void*){led = true;});
+	touchSensor->setCallback([](void*)
+		{
+			if (!wifiIsConnect()) return;
+			if (!screenThread.isRunning())
+				screenThread = Thread{ screenMain,"screen" };
+			updateLed();
+		}, [](void*){});
 
 	touchSensorHost->start();
 
@@ -196,14 +200,12 @@ extern "C" void app_main()
 	GPIO{ GPIO::GPIO_NUM::GPIO_NUM_0, GPIO::Mode::GPIO_MODE_INPUT, GPIO::Pull::GPIO_PULLUP_ONLY, GPIO::Interrupt::GPIO_INTR_ANYEDGE,
 		[](void*)
 		{
-			if (!screenThread.isRunning())
-				screenThread = Thread{ screenMain,"screen" };
+			if (!wifiThread.isRunning())
+				wifiThread = Thread{ wifiMain,"wifi" };
 			updateLed();
 		} };
 
 	updateLed();
-
-	// screenThread = Thread{ screenMain,"screen" };
 
 	return;
 }
